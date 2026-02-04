@@ -2,22 +2,22 @@ import streamlit as st
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 import uuid
 
-st.set_page_config(page_title="Sala de Audio Privada - Solo Voz (Anti-Eco)", layout="wide")
+st.set_page_config(page_title="Solo Escuchar al Otro", layout="wide")
 
-st.title("🎙️ Sala de Audio Privada (Solo Voz - Máximo 3 personas)")
+st.title("🎙️ Solo Escuchar al Otro (Sin Eco de Mi Voz)")
 
 st.warning("""
-**Problema actual detectado:** Escuchas tu voz fuerte (eco/local playback) pero el audio del otro llega mal o no llega.  
-Solución principal → **usa auriculares**. Si no puedes, baja al máximo el volumen de tus altavoces mientras pruebas.
+**Objetivo:** Tus auriculares deben reproducir **solo la voz de la otra persona**.  
+No debes escuchar tu propia voz.
 """)
 
-st.markdown("### Instrucciones rápidas")
-st.markdown("1. Usa **auriculares** (la diferencia es inmediata)")
-st.markdown("2. Permite micrófono")
-st.markdown("3. Abre **dos pestañas/dispositivos** con el **mismo Room ID**")
-st.markdown("4. Habla en una → escucha en la otra")
+st.markdown("### 🔑 Instrucciones obligatorias:")
+st.markdown("1. **Usa auriculares** (imprescindible para que funcione bien)")
+st.markdown("2. Permite acceso al micrófono")
+st.markdown("3. Abre la app en **dos dispositivos/pestañas** con el mismo Room ID")
+st.markdown("4. Habla en una → solo deberías escuchar al otro en tus auriculares")
 
-# ── TURN/STUN más robusto ──
+# Configuración ICE (STUN + TURN recomendados)
 RTC_CONFIG = RTCConfiguration(
     iceServers=[
         {"urls": "stun:stun.l.google.com:19302"},
@@ -35,36 +35,36 @@ RTC_CONFIG = RTCConfiguration(
     ]
 )
 
-# ── Room ID ──
+# Room ID
 if "room_id" not in st.session_state:
     st.session_state.room_id = str(uuid.uuid4())[:8]
 
 room = st.text_input("Room ID (compártelo exactamente)", value=st.session_state.room_id)
 
-if st.button("Unirse / Refrescar"):
+if st.button("Unirse / Cambiar sala"):
     st.session_state.room_id = room.strip() or st.session_state.room_id
     st.rerun()
 
-st.markdown(f"**Room ID para compartir:** `{st.session_state.room_id}`")
+st.markdown(f"**Room ID actual:** `{st.session_state.room_id}`")
 
-# ── Constraints muy agresivas para echo cancellation ──
+# Constraints agresivas para eliminar eco local
 audio_constraints = {
     "mandatory": {
         "echoCancellation": True,
-        "echoCancellationType": "system",  # Prueba "browser" si no funciona
+        "echoCancellationType": "system",        # "system" suele ser mejor que "browser"
         "noiseSuppression": True,
-        "autoGainControl": True
+        "autoGainControl": True,
+        "googEchoCancellation": True,
+        "googAutoGainControl": True,
+        "googNoiseSuppression": True,
+        "googHighpassFilter": True,
+        "googTypingNoiseDetection": True
     },
-    "optional": [
-        {"googEchoCancellation": True},
-        {"googAutoGainControl": True},
-        {"googNoiseSuppression": True},
-        {"googHighpassFilter": True}
-    ]
+    "optional": []
 }
 
 ctx = webrtc_streamer(
-    key=f"audio_antiec_{st.session_state.room_id}",
+    key=f"only_remote_audio_{st.session_state.room_id}",
     mode=WebRtcMode.SENDRECV,
     rtc_configuration=RTC_CONFIG,
     media_stream_constraints={
@@ -74,29 +74,29 @@ ctx = webrtc_streamer(
     desired_playing_state=True,
     audio_html_attrs={
         "controls": True,
-        "style": {"width": "100%", "margin": "15px 0"}
+        "style": {"width": "100%", "margin": "20px 0"}
     }
 )
 
-# ── Diagnóstico claro ──
-if ctx.input_audio_track:
-    st.success("✅ Tu micrófono está enviando audio (el otro debería escucharte)")
-else:
-    st.error("❌ No detecta micrófono → verifica permisos o prueba otro navegador")
+# Diagnóstico
+col1, col2 = st.columns(2)
 
-if ctx.state.playing:
-    st.success("🟢 Reproduciendo audio recibido → deberías escuchar al otro aquí")
-    st.info("Si no escuchas nada del otro → prueba auriculares + volumen bajo + otro navegador")
-else:
-    st.warning("🔴 No está reproduciendo audio recibido todavía")
+with col1:
+    if ctx.input_audio_track:
+        st.success("✅ Enviando tu voz al otro")
+    else:
+        st.error("❌ Micrófono no detectado")
 
-st.markdown("""
-### ¿Qué hacer si sigues sin escuchar al otro?
-- Confirma que el otro también tiene micrófono activo (pídele que hable fuerte o ponga música cerca del mic)
-- Abre la consola del navegador (F12 → Console) y busca errores con "ICE", "audio", "echo" o "failed"
-- Prueba en **Chrome** (mejor soporte WebRTC) o **Edge**
-- Cambia de red (WiFi → datos móviles)
-- Dime qué ves exactamente: ¿el otro te escucha a ti? ¿tú escuchas algo (aunque sea bajo)?
-""")
+with col2:
+    if ctx.state.playing:
+        st.success("🟢 Reproduciendo audio del otro → Deberías escuchar SOLO al otro")
+    else:
+        st.warning("🔴 No reproduciendo audio recibido todavía")
 
-st.caption("Nota: En laptops sin auriculares el echo cancellation del navegador lucha mucho. Auriculares resuelven casi siempre.")
+st.markdown("---")
+st.markdown("### ¿Qué esperar con auriculares?")
+st.markdown("- Tus auriculares **solo deben reproducir la voz de la otra persona**")
+st.markdown("- No debes escuchar tu propia voz (el echo cancellation + auriculares lo evitan)")
+st.markdown("- Si aún escuchas tu voz → baja el volumen general de la computadora o prueba otros auriculares")
+
+st.caption("Si después de usar auriculares sigues escuchando tu propia voz fuerte, copia los errores de la consola del navegador (F12 → Console) y pégamelos aquí.")

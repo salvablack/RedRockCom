@@ -2,17 +2,16 @@ import streamlit as st
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 import uuid
 
-st.set_page_config(page_title="Sala Audio Privada - Fix Audio Silencioso", layout="centered")
+st.set_page_config(page_title="Sala Audio - Fix Sonido Móvil", layout="centered")
 
 st.title("🎙️ Sala de Audio Privada")
-st.caption("Conectados pero sin sonido? Prueba los pasos abajo")
+st.caption("Conectados pero sin sonido → toca 'Activar Sonido' en celular")
 
 st.info("""
-Si ves "🟢 Reproduciendo" pero no escuchas nada en auriculares:
-1. Haz clic en "Forzar Audio" abajo
-2. Habla fuerte en el otro dispositivo
-3. Confirma auriculares seleccionados en ajustes de sonido
-4. Refresca y prueba con otro navegador
+Si ves 🟢 pero no oyes nada:
+- En celular: toca la pantalla o el botón 'Activar Sonido' primero
+- Usa auriculares (cable o Bluetooth)
+- Habla fuerte en el otro dispositivo después de activar
 """)
 
 RTC_CONFIG = RTCConfiguration(
@@ -48,7 +47,7 @@ audio_constraints = {
 }
 
 ctx = webrtc_streamer(
-    key=f"audio_fix_{st.session_state.room_id}",
+    key=f"audio_mobile_fix_{st.session_state.room_id}",
     mode=WebRtcMode.SENDRECV,
     rtc_configuration=RTC_CONFIG,
     media_stream_constraints={"audio": audio_constraints, "video": False},
@@ -57,16 +56,16 @@ ctx = webrtc_streamer(
 )
 
 if ctx.input_audio_track:
-    st.success("✅ Tu micrófono envía audio")
+    st.success("✅ Micrófono enviando")
 else:
     st.error("❌ Micrófono no activo")
 
 if ctx.state.playing:
-    st.success("🟢 Conectado y reproduciendo (deberías oír al otro)")
-    if st.button("🔊 Forzar / Activar Audio Remoto (clic aquí si silencioso)"):
-        st.info("Clic hecho → habla ahora en el otro lado. Esto desbloquea autoplay en muchos navegadores.")
+    st.success("🟢 Conectado → audio debería reproducirse")
+    st.button("🔊 Activar / Desbloquear Sonido (toca aquí en celular si silencioso)", use_container_width=True)
+    st.info("Después de tocar → habla en el otro lado. Esto ayuda en móvil donde autoplay falla.")
 else:
-    st.warning("🔴 No reproduciendo audio recibido todavía")
+    st.warning("🔴 Aún no reproduciendo audio recibido")
 
 st.markdown("---")
-st.caption("Prueba: Habla en un dispositivo → escucha en el otro con auriculares puestos.")
+st.caption("Prueba: Toca el botón grande arriba en celular → habla en PC → escucha en auriculares del celular.")

@@ -3,34 +3,39 @@ from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 import uuid
 
 st.set_page_config(
-    page_title="Sala Audio Privada - Móvil Optimizado",
+    page_title="Sala de Audio Privada – Optimizado Móvil",
     layout="centered",
     initial_sidebar_state="collapsed"
 )
 
 st.title("🎙️ Sala de Audio Privada")
-st.caption("Optimizado para celular | Solo audio | Máximo 3 personas")
+st.caption("Solo audio · Máximo 3 personas · Optimizado para celular 2026")
 
-st.info("""
-**Prueba obligatoria para conectar en celular:**
-1. Usa **Chrome** (Android) o **Safari actualizado** (iOS)
-2. Permite micrófono (icono arriba o en ajustes)
-3. Prueba **WiFi diferente** o **solo datos móviles 4G/5G**
-4. Usa **auriculares** (reduce eco y ayuda conexión)
-5. Si se queda "Esperando conexión..." → refresca página o cambia Room ID
-6. Abre en **dos celulares** o uno + PC con el mismo Room ID
+st.markdown("""
+### Instrucciones importantes (especialmente si falla en celular)
+1. **En celular**: usa **Chrome** (Android) o **Safari actualizado** (iPhone)
+2. Permite el micrófono cuando aparezca el aviso
+3. Prueba **cambiando de red**:
+   - WiFi → datos móviles 4G/5G
+   - Datos móviles → WiFi diferente
+4. Usa **auriculares** (con o sin cable) → elimina eco y mejora conexión
+5. Si se queda en "Esperando conexión...":
+   - Refresca la página 2–3 veces
+   - Crea un Room ID nuevo
+   - Prueba en otro celular o PC al mismo tiempo
 """)
 
-# RTC Configuration con más opciones TURN/STUN (2026 - probados en issues recientes)
+# ──────────────────────────────────────────────────────────────
+# Configuración ICE – más servidores TURN para móviles / redes difíciles
+# ──────────────────────────────────────────────────────────────
 RTC_CONFIG = RTCConfiguration(
     iceServers=[
-        # STUN Google (siempre base)
+        # Google STUN (siempre incluir)
         {"urls": "stun:stun.l.google.com:19302"},
         {"urls": "stun:stun1.l.google.com:19302"},
         {"urls": "stun:stun2.l.google.com:19302"},
-        {"urls": "stun:stun.stunprotocol.org:3478"},
         
-        # OpenRelay (principal gratuito, 20GB/mes)
+        # OpenRelay – el más usado y gratuito
         {
             "urls": [
                 "turn:openrelay.metered.ca:80",
@@ -41,55 +46,66 @@ RTC_CONFIG = RTCConfiguration(
             "credential": "openrelayproject"
         },
         
-        # Alternativas si openrelay falla/satura
+        # Alternativas adicionales si openrelay está saturado
         {
             "urls": "turn:numb.viagenie.ca",
             "username": "webrtc@live.com",
             "credential": "muazkh"
         },
         {
-            "urls": "turn:relay1.expressturn.com:3478",
-            "username": "expressturnfree",
-            "credential": "expressturnfree"  # puede cambiar, busca actualizaciones si falla
+            "urls": "turn:turn.anyfirewall.com:443?transport=tcp",
+            "username": "webrtc",
+            "credential": "webrtc"
+        },
+        {
+            "urls": "turn:relay.webwormhole.io:3478?transport=udp",
+            "username": "anonymous",
+            "credential": "anonymous"
         }
     ]
 )
 
+# ──────────────────────────────────────────────────────────────
 # Room ID
+# ──────────────────────────────────────────────────────────────
 if "room_id" not in st.session_state:
     st.session_state.room_id = str(uuid.uuid4())[:8]
 
 room_input = st.text_input(
-    "Room ID (compártelo exactamente)",
+    "Room ID (compártelo exactamente igual)",
     value=st.session_state.room_id,
-    max_chars=20,
-    help="Usa el mismo en todos los dispositivos"
+    max_chars=20
 )
 
-if st.button("Unirse / Crear nuevo"):
-    new_room = room_input.strip()
-    if new_room:
-        st.session_state.room_id = new_room
+if st.button("Unirse / Crear sala nueva"):
+    cleaned = room_input.strip()
+    if cleaned:
+        st.session_state.room_id = cleaned
     else:
         st.session_state.room_id = str(uuid.uuid4())[:8]
     st.rerun()
 
-st.markdown(f"**Tu Room ID para compartir:** `{st.session_state.room_id}`")
+st.markdown(f"**Room ID actual para compartir:**  `{st.session_state.room_id}`")
 
-# Audio constraints móviles: bajo consumo, eco fuerte, mono
+# ──────────────────────────────────────────────────────────────
+# Audio constraints – optimizadas para móviles (bajo consumo)
+# ──────────────────────────────────────────────────────────────
 audio_constraints = {
     "echoCancellation": True,
-    "echoCancellationType": "system",  # o "browser" si falla
+    "echoCancellationType": "system",   # prueba "browser" si falla
     "noiseSuppression": True,
     "autoGainControl": True,
-    "channelCount": 1,          # Mono = menos datos en móvil
-    "sampleRate": 16000,        # 16kHz = buena calidad + bajo ancho de banda
+    "channelCount": 1,                  # mono → menos datos
+    "sampleRate": 16000,                # 16 kHz → buena calidad + bajo ancho de banda
     "googEchoCancellation": True,
     "googNoiseSuppression": True
 }
 
+# ──────────────────────────────────────────────────────────────
+# WebRTC streamer
+# ──────────────────────────────────────────────────────────────
 ctx = webrtc_streamer(
-    key=f"audio_mobile_{st.session_state.room_id}",
+    key=f"audio_only_{st.session_state.room_id}",
     mode=WebRtcMode.SENDRECV,
     rtc_configuration=RTC_CONFIG,
     media_stream_constraints={
@@ -103,32 +119,31 @@ ctx = webrtc_streamer(
     }
 )
 
-# Diagnóstico
+# ──────────────────────────────────────────────────────────────
+# Diagnóstico claro
+# ──────────────────────────────────────────────────────────────
 if ctx.input_audio_track:
-    st.success("✅ Micrófono activo → tu voz va al otro")
+    st.success("✅ Micrófono activo → tu voz se envía")
 else:
-    st.error("❌ Micrófono no detectado")
-    st.markdown("- Verifica permisos en navegador y ajustes del celular")
-    st.markdown("- Prueba permitir 'siempre' para este sitio")
+    st.error("❌ No detecta micrófono")
+    st.markdown("→ Verifica permisos en el navegador y ajustes del celular")
 
 if ctx.state.playing:
-    st.success("🟢 Reproduciendo audio del otro → ¡habla y escucha!")
-    st.info("Con auriculares: solo deberías oír al otro (sin tu eco)")
+    st.success("🟢 Reproduciendo audio recibido → deberías escuchar al otro")
+    st.info("Con auriculares: solo deberías oír la voz del otro (sin eco)")
 else:
     st.warning("🔴 Esperando conexión... (ICE checking o failed)")
     st.markdown("""
-    Soluciones rápidas:
-    - Cambia WiFi → datos móviles (o viceversa)
-    - Refresca página (F5 o botón recargar)
-    - Crea Room ID nuevo
-    - Prueba en Chrome (mejor en Android)
+    **Qué hacer ahora mismo:**
+    - Cambia de WiFi a datos móviles (o viceversa)
+    - Refresca la página varias veces
+    - Prueba en Chrome (Android) o Safari (iPhone)
+    - Abre la misma sala en PC y celular al mismo tiempo
     """)
 
 st.markdown("---")
 st.caption("""
-Si sigue "Esperando conexión...":
-- Dime: ¿Android o iOS? ¿Chrome/Safari? ¿WiFi o datos?
-- ¿Funciona en PC pero no en celular?
-- ¿El otro dispositivo ve lo mismo?
-- Abre consola (Chrome móvil: chrome://inspect desde PC) y copia errores con "ICE", "failed" o "closed"
+Si sigue sin conectar en celular pero sí en PC:
+→ Es casi seguro problema de red móvil / NAT / TURN saturado
+Dime: Android o iOS / WiFi o datos / qué navegador / qué pasa exactamente (carga eterna, negro, etc.)
 """)

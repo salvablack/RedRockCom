@@ -1,4 +1,4 @@
-streamlit>=1.30
-streamlit-webrtc>=0.47
-aiortc>=1.5
-av>=10
+streamlit>=1.42.0
+streamlit-webrtc>=0.48.1  # importante: versiones >=0.48.1 arreglan muchos bugs móviles y con Streamlit nuevo
+aiortc>=1.6.0
+av>=12.0.0

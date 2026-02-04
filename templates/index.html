@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sala de Audio Privada</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f0f4f8; }
+    input, button { padding: 10px; margin: 8px; font-size: 16px; width: 90%; max-width: 400px; }
+    #status { margin: 20px; font-weight: bold; color: #333; }
+    audio { width: 80%; max-width: 400px; margin: 20px auto; display: block; }
+  </style>
+</head>
+<body>
+  <h2>🎙️ Sala de Audio Privada (Máx 3 personas)</h2>
+
+  <input id="room" placeholder="Ingresa Room ID (compártelo)" />
+  <button onclick="joinRoom()">Unirse / Crear sala</button>
+
+  <div id="status">Estado: Esperando...</div>
+
+  <!-- Audio remoto (solo del otro) -->
+  <audio id="remoteAudio" autoplay playsinline controls></audio>
+
+  <script>
+    const socket = io();
+    let pc = null;
+    let localStream = null;
+    let remoteAudio = document.getElementById('remoteAudio');
+    let currentRoom = null;
+    let myId = null;
+
+    const config = {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        {
+          urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443?transport=tcp'],
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
+      ]
+    };
+
+    async function joinRoom() {
+      currentRoom = document.getElementById('room').value.trim();
+      if (!currentRoom) return alert('Ingresa un Room ID');
+
+      socket.emit('join', { room: currentRoom });
+      document.getElementById('status').innerText = `Conectado a sala: ${currentRoom}`;
+
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      startCall();  // Inicia oferta automáticamente
+    }
+
+    function startCall() {
+      pc = new RTCPeerConnection(config);
+
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+      pc.onicecandidate = e => {
+        if (e.candidate) {
+          socket.emit('ice-candidate', { candidate: e.candidate, to: 'all', room: currentRoom });
+        }
+      };
+
+      pc.ontrack = e => {
+        remoteAudio.srcObject = e.streams[0];
+        document.getElementById('status').innerText += '\n¡Audio del otro recibido! Habla ahora.';
+      };
+
+      pc.onconnectionstatechange = () => {
+        document.getElementById('status').innerText += `\nEstado conexión: ${pc.connectionState}`;
+      };
+    }
+
+    socket.on('peer_joined', async data => {
+      if (!pc) startCall();
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit('offer', { offer, to: data.from, room: currentRoom });
+    });
+
+    socket.on('offer', async data => {
+      if (!pc) startCall();
+      await pc.setRemoteDescription(data.offer);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit('answer', { answer, to: data.from || data.sid, room: currentRoom });
+    });
+
+    socket.on('answer', async data => {
+      await pc.setRemoteDescription(data.answer);
+    });
+
+    socket.on('ice-candidate', async data => {
+      if (pc && data.candidate) {
+        await pc.addIceCandidate(data.candidate);
+      }
+    });
+
+    socket.on('status', data => {
+      document.getElementById('status').innerText += '\n' + data.msg;
+    });
+  </script>
+</body>
+</html>

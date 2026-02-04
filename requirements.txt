@@ -1,0 +1,4 @@
+streamlit>=1.30
+streamlit-webrtc>=0.47
+aiortc>=1.5
+av>=10

@@ -1,71 +1,32 @@
-import streamlit as st
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
-import uuid
+from flask import Flask, render_template
+from flask_socketio import SocketIO, emit, join_room
 
-st.set_page_config(page_title="Sala Audio - Fix Sonido Móvil", layout="centered")
+app = Flask(__name__)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-st.title("🎙️ Sala de Audio Privada")
-st.caption("Conectados pero sin sonido → toca 'Activar Sonido' en celular")
+@app.route('/')
+def index():
+    return render_template('index.html')
 
-st.info("""
-Si ves 🟢 pero no oyes nada:
-- En celular: toca la pantalla o el botón 'Activar Sonido' primero
-- Usa auriculares (cable o Bluetooth)
-- Habla fuerte en el otro dispositivo después de activar
-""")
+# Signaling WebRTC
+@socketio.on('join')
+def on_join(data):
+    room = data['room']
+    join_room(room)
+    emit('status', {'msg': f'Unido a sala {room}'}, to=request.sid)
+    emit('peer_joined', {'from': request.sid}, to=room, include_self=False)
 
-RTC_CONFIG = RTCConfiguration(
-    iceServers=[
-        {"urls": "stun:stun.l.google.com:19302"},
-        {"urls": "stun:stun1.l.google.com:19302"},
-        {
-            "urls": ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443?transport=tcp"],
-            "username": "openrelayproject",
-            "credential": "openrelayproject"
-        },
-        {"urls": "turn:numb.viagenie.ca", "username": "webrtc@live.com", "credential": "muazkh"}
-    ]
-)
+@socketio.on('offer')
+def on_offer(data):
+    emit('offer', data, to=data['to'], include_self=False)
 
-if "room_id" not in st.session_state:
-    st.session_state.room_id = str(uuid.uuid4())[:8]
+@socketio.on('answer')
+def on_answer(data):
+    emit('answer', data, to=data['to'], include_self=False)
 
-room = st.text_input("Room ID", value=st.session_state.room_id)
+@socketio.on('ice-candidate')
+def on_ice(data):
+    emit('ice-candidate', data, to=data['to'], include_self=False)
 
-if st.button("Unirse / Refrescar"):
-    st.session_state.room_id = room.strip() or str(uuid.uuid4())[:8]
-    st.rerun()
-
-st.markdown(f"**Room ID:** `{st.session_state.room_id}`")
-
-audio_constraints = {
-    "echoCancellation": True,
-    "noiseSuppression": True,
-    "autoGainControl": True,
-    "channelCount": 1,
-    "sampleRate": 16000
-}
-
-ctx = webrtc_streamer(
-    key=f"audio_mobile_fix_{st.session_state.room_id}",
-    mode=WebRtcMode.SENDRECV,
-    rtc_configuration=RTC_CONFIG,
-    media_stream_constraints={"audio": audio_constraints, "video": False},
-    desired_playing_state=True,
-    audio_html_attrs={"controls": False, "style": {"width": "100%"}}
-)
-
-if ctx.input_audio_track:
-    st.success("✅ Micrófono enviando")
-else:
-    st.error("❌ Micrófono no activo")
-
-if ctx.state.playing:
-    st.success("🟢 Conectado → audio debería reproducirse")
-    st.button("🔊 Activar / Desbloquear Sonido (toca aquí en celular si silencioso)", use_container_width=True)
-    st.info("Después de tocar → habla en el otro lado. Esto ayuda en móvil donde autoplay falla.")
-else:
-    st.warning("🔴 Aún no reproduciendo audio recibido")
-
-st.markdown("---")
-st.caption("Prueba: Toca el botón grande arriba en celular → habla en PC → escucha en auriculares del celular.")
+if __name__ == '__main__':
+    socketio.run(app, host='0.0.0.0', port=5000, debug=False)

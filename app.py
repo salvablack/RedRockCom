@@ -87,8 +87,8 @@ def get_room_id() -> str | None:
 # UI
 # ---------------------------------------------------
 
-st.title("🔒 Llamada privada por Room ID")
-st.caption("Conexión WebRTC P2P cifrada, sin servidor intermedio.")
+st.title("🔒 RedRock Room")
+st.caption("Conexión cifrada, sin servidor intermedio.")
 
 room_id = get_room_id()
 if not room_id:

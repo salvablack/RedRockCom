@@ -1,169 +1,89 @@
-import re
-from dataclasses import dataclass
-
-import numpy as np
+import time
+import base64
+import hashlib
+from nacl.secret import SecretBox
+from nacl.utils import random as nacl_random
+from nacl.pwhash import argon2id
 import streamlit as st
-from streamlit_webrtc import (
-    webrtc_streamer,
-    WebRtcMode,
-    RTCConfiguration,
-    AudioProcessorBase,
-)
+
+st.set_page_config(page_title="Chat E2EE por Room ID", layout="centered")
 
 # ---------------------------------------------------
-# CONFIG GENERAL
+# "Base de datos" en memoria (demo)
+# En producción esto sería Redis / DB
 # ---------------------------------------------------
 
-st.set_page_config(page_title="Llamada privada", layout="centered")
+if "messages" not in st.session_state:
+    st.session_state.messages = {}
 
 # ---------------------------------------------------
-# RTC CONFIG (preparado para TURN)
+# DERIVACIÓN DE CLAVE DESDE ROOM ID (Argon2)
 # ---------------------------------------------------
 
-@dataclass(frozen=True)
-class WebRTCConfig:
-    stun_urls: list
-    turn_urls: list | None = None
-    username: str | None = None
-    credential: str | None = None
-
-    def build(self):
-        ice_servers = [{"urls": self.stun_urls}]
-        if self.turn_urls:
-            ice_servers.append(
-                {
-                    "urls": self.turn_urls,
-                    "username": self.username,
-                    "credential": self.credential,
-                }
-            )
-        return RTCConfiguration({"iceServers": ice_servers})
+def derive_key(room_id: str) -> bytes:
+    salt = hashlib.sha256(room_id.encode()).digest()
+    key = argon2id.kdf(
+        SecretBox.KEY_SIZE,
+        room_id.encode(),
+        salt,
+        opslimit=argon2id.OPSLIMIT_MODERATE,
+        memlimit=argon2id.MEMLIMIT_MODERATE,
+    )
+    return key
 
 
-RTC_CONFIG = WebRTCConfig(
-    stun_urls=["stun:stun.l.google.com:19302"],
-).build()
-
-# ---------------------------------------------------
-# AUDIO PROCESSOR (mute + nivel de voz SIN romper audio)
-# ---------------------------------------------------
-
-class AudioLevelProcessor(AudioProcessorBase):
-    def __init__(self):
-        self.audio_level = 0.0
-        self.muted = False
-
-    def recv(self, frame):
-        audio = frame.to_ndarray()
-        self.audio_level = float(np.abs(audio).mean())
-
-        if self.muted:
-            audio = np.zeros_like(audio)
-
-        new_frame = frame.from_ndarray(audio, layout=frame.layout)
-        new_frame.sample_rate = frame.sample_rate
-
-        return new_frame
+def encrypt_message(box: SecretBox, message: str) -> str:
+    nonce = nacl_random(SecretBox.NONCE_SIZE)
+    encrypted = box.encrypt(message.encode(), nonce)
+    return base64.b64encode(encrypted).decode()
 
 
-# ---------------------------------------------------
-# VALIDACIÓN ROOM ID
-# ---------------------------------------------------
-
-ROOM_REGEX = re.compile(r"^[a-zA-Z0-9_-]{4,32}$")
-
-
-def get_room_id():
-    room = st.text_input("Room ID (lo eliges tú)", type="password")
-
-    if not room:
-        st.info("Ambas personas deben usar exactamente el mismo Room ID")
-        return None
-
-    if not ROOM_REGEX.match(room):
-        st.error("Solo letras, números, _ y - (4–32 caracteres)")
-        return None
-
-    return room
+def decrypt_message(box: SecretBox, ciphertext: str) -> str:
+    try:
+        raw = base64.b64decode(ciphertext.encode())
+        decrypted = box.decrypt(raw)
+        return decrypted.decode()
+    except Exception:
+        return "[Mensaje ilegible]"
 
 
 # ---------------------------------------------------
 # UI
 # ---------------------------------------------------
 
-st.title("🔒 Llamada privada P2P por Room ID")
+st.title("🔐 Chat cifrado extremo a extremo por Room ID")
 
-room_id = get_room_id()
+room_id = st.text_input("Room ID (clave secreta compartida)", type="password")
+
 if not room_id:
     st.stop()
 
-# ---------------------------------------------------
-# MUTE STATE
-# ---------------------------------------------------
+key = derive_key(room_id)
+box = SecretBox(key)
 
-if "muted" not in st.session_state:
-    st.session_state.muted = False
-
-
-def toggle_mute():
-    st.session_state.muted = not st.session_state.muted
-
-
-st.button(
-    "🔇 Mute" if not st.session_state.muted else "🔊 Unmute",
-    on_click=toggle_mute,
-)
+# Inicializar sala
+if room_id not in st.session_state.messages:
+    st.session_state.messages[room_id] = []
 
 # ---------------------------------------------------
-# WEBRTC
+# MOSTRAR MENSAJES DESCIFRADOS
 # ---------------------------------------------------
 
-webrtc_ctx = webrtc_streamer(
-    key=f"room-{room_id}",
-    mode=WebRtcMode.SENDRECV,
-    rtc_configuration=RTC_CONFIG,
-    media_stream_constraints={
-        "video": False,
-        "audio": True,
-    },
-    audio_processor_factory=AudioLevelProcessor,
-    async_processing=True,
-)
+st.subheader("Mensajes")
+
+for ciphertext, timestamp in st.session_state.messages[room_id]:
+    msg = decrypt_message(box, ciphertext)
+    st.write(f"🕒 {timestamp} — {msg}")
 
 # ---------------------------------------------------
-# ESTADO + NIVEL DE VOZ
+# ENVIAR MENSAJE
 # ---------------------------------------------------
 
-status = st.empty()
-voice = st.empty()
+st.divider()
+msg_input = st.text_input("Escribe un mensaje")
 
-if webrtc_ctx.state.playing:
-    status.success("🟢 Conectado")
-
-    if webrtc_ctx.audio_processor:
-        webrtc_ctx.audio_processor.muted = st.session_state.muted
-        level = webrtc_ctx.audio_processor.audio_level
-
-        if level > 200:
-            voice.success("🎤 Hablando")
-        elif level > 20:
-            voice.info("🔊 Audio detectado")
-        else:
-            voice.warning("🔇 Silencio")
-else:
-    status.warning("🟡 Esperando a la otra persona...")
-
-# ---------------------------------------------------
-# INSTRUCCIONES
-# ---------------------------------------------------
-
-with st.expander("📌 Cómo usar"):
-    st.markdown(
-        """
-        1. Ambos abren esta app.
-        2. Escriben el mismo **Room ID**.
-        3. Permiten el micrófono.
-        4. La conexión es directa y cifrada (P2P).
-        """
-    )
-
+if st.button("Enviar") and msg_input:
+    encrypted = encrypt_message(box, msg_input)
+    timestamp = time.strftime("%H:%M:%S")
+    st.session_state.messages[room_id].append((encrypted, timestamp))
+    st.rerun()

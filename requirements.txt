@@ -1,4 +1,2 @@
-streamlit>=1.42.0
-streamlit-webrtc>=0.48.1
-aiortc>=1.6.0
-av>=12.0.0
+streamlit==1.31.1
+pynacl==1.5.0

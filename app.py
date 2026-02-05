@@ -1,24 +1,23 @@
 import re
-import time
-import logging
 from dataclasses import dataclass
 
+import numpy as np
 import streamlit as st
 from streamlit_webrtc import (
     webrtc_streamer,
     WebRtcMode,
     RTCConfiguration,
+    AudioProcessorBase,
 )
 
 # ---------------------------------------------------
-# CONFIG GENERAL
+# CONFIGURACIÓN GENERAL
 # ---------------------------------------------------
 
 st.set_page_config(page_title="Llamada privada", layout="centered")
-logging.basicConfig(level=logging.INFO)
 
 # ---------------------------------------------------
-# CONFIG RTC (LISTO PARA TURN)
+# CONFIG RTC (PREPARADO PARA TURN)
 # ---------------------------------------------------
 
 @dataclass(frozen=True)
@@ -46,21 +45,40 @@ RTC_CONFIG = WebRTCConfig(
 ).build()
 
 # ---------------------------------------------------
-# VALIDACIÓN ROOM
+# AUDIO PROCESSOR (mute + nivel de voz)
+# ---------------------------------------------------
+
+class AudioLevelProcessor(AudioProcessorBase):
+    def __init__(self):
+        self.audio_level = 0.0
+        self.muted = False
+
+    def recv(self, frame):
+        audio = frame.to_ndarray()
+        self.audio_level = float(np.abs(audio).mean())
+
+        if self.muted:
+            audio[:] = 0
+
+        return frame.from_ndarray(audio, layout=frame.layout)
+
+
+# ---------------------------------------------------
+# VALIDACIÓN ROOM ID
 # ---------------------------------------------------
 
 ROOM_REGEX = re.compile(r"^[a-zA-Z0-9_-]{4,32}$")
 
 
 def get_room_id():
-    room = st.text_input("Room ID (definido por ti)", type="password")
+    room = st.text_input("Room ID (lo eliges tú)", type="password")
 
     if not room:
         st.info("Ambas personas deben usar exactamente el mismo Room ID")
         return None
 
     if not ROOM_REGEX.match(room):
-        st.error("Solo letras, números, _ y - (4–32 chars)")
+        st.error("Solo letras, números, _ y - (4–32 caracteres)")
         return None
 
     return room
@@ -70,32 +88,31 @@ def get_room_id():
 # UI
 # ---------------------------------------------------
 
-st.title("🔒 RedRock Com")
+st.title("🔒 Llamada privada P2P por Room ID")
 
 room_id = get_room_id()
 if not room_id:
     st.stop()
 
 # ---------------------------------------------------
-# CONTROL DE MUTE EN SESSION STATE
+# MUTE STATE
 # ---------------------------------------------------
 
 if "muted" not in st.session_state:
     st.session_state.muted = False
 
+
 def toggle_mute():
     st.session_state.muted = not st.session_state.muted
 
 
-col1, col2 = st.columns(2)
-with col1:
-    st.button(
-        "🔇 Mute" if not st.session_state.muted else "🔊 Unmute",
-        on_click=toggle_mute,
-    )
+st.button(
+    "🔇 Mute" if not st.session_state.muted else "🔊 Unmute",
+    on_click=toggle_mute,
+)
 
 # ---------------------------------------------------
-# WEBRTC
+# WEBRTC STREAMER
 # ---------------------------------------------------
 
 webrtc_ctx = webrtc_streamer(
@@ -110,46 +127,30 @@ webrtc_ctx = webrtc_streamer(
             "autoGainControl": True,
         },
     },
+    audio_processor_factory=AudioLevelProcessor,
     async_processing=True,
 )
 
 # ---------------------------------------------------
-# ESTADO DE CONEXIÓN
+# ESTADO DE CONEXIÓN + NIVEL DE AUDIO
 # ---------------------------------------------------
 
 status_placeholder = st.empty()
-stats_placeholder = st.empty()
+audio_placeholder = st.empty()
 
 if webrtc_ctx.state.playing:
     status_placeholder.success("🟢 Conectado")
 
-    # Aplicar mute dinámico
     if webrtc_ctx.audio_processor:
         webrtc_ctx.audio_processor.muted = st.session_state.muted
+        level = webrtc_ctx.audio_processor.audio_level
 
-    # ---------------------------------------------------
-    # MONITOREO DE STATS (latencia y calidad)
-    # ---------------------------------------------------
-    for _ in range(5):  # refresca stats unos segundos
-        stats = webrtc_ctx.get_stats()
-        rtt = None
-        bitrate = None
-
-        for report in stats.values():
-            if report.type == "candidate-pair" and report.state == "succeeded":
-                rtt = report.currentRoundTripTime
-
-            if report.type == "outbound-rtp" and report.kind == "audio":
-                bitrate = report.bytesSent
-
-        stats_placeholder.markdown(
-            f"""
-            **Latencia (RTT):** {round(rtt*1000,2) if rtt else 'N/A'} ms  
-            **Audio enviado:** {bitrate if bitrate else 'N/A'} bytes
-            """
-        )
-        time.sleep(1)
-
+        if level > 200:
+            audio_placeholder.success("🎤 Hablando")
+        elif level > 20:
+            audio_placeholder.info("🔊 Audio detectado")
+        else:
+            audio_placeholder.warning("🔇 Silencio")
 else:
     status_placeholder.warning("🟡 Esperando a la otra persona...")
 
@@ -162,7 +163,8 @@ with st.expander("📌 Cómo usar"):
         """
         1. Ambos abren esta app.
         2. Escriben el mismo **Room ID**.
-        3. Permiten micrófono.
-        4. La conexión es directa, cifrada y sin servidor intermedio.
+        3. Permiten el acceso al micrófono.
+        4. La conexión es directa P2P y cifrada.
         """
     )
+

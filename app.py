@@ -10,7 +10,7 @@ from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 # ---------------------------------------------------
 
 st.set_page_config(
-    page_title="Llamada privada",
+    page_title="RedRock Room",
     layout="centered",
     initial_sidebar_state="collapsed",
 )

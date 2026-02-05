@@ -1,34 +1,16 @@
 import base64
 import hashlib
 import time
-import pandas as pd
+import requests
 import streamlit as st
-import gspread
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 from cryptography.fernet import Fernet
-from oauth2client.service_account import ServiceAccountCredentials
+
+SERVER = "https://TU_APP.streamlit.app"  # misma app
 
 st.set_page_config(page_title="Chat E2EE", layout="centered")
 
-# ---------------------------------------------------
-# GOOGLE SHEETS CONEXIÓN
-# ---------------------------------------------------
-
-scope = ["https://spreadsheets.google.com/feeds",
-         "https://www.googleapis.com/auth/drive"]
-
-creds = ServiceAccountCredentials.from_json_keyfile_dict(
-    st.secrets["gcp_service_account"], scope
-)
-client = gspread.authorize(creds)
-
-SHEET_ID = "PEGA_AQUI_EL_ID_DEL_SHEET"
-sheet = client.open_by_key(SHEET_ID).sheet1
-
-# ---------------------------------------------------
-# CRIPTO
-# ---------------------------------------------------
 
 def derive_key(room_id: str) -> bytes:
     salt = hashlib.sha256(room_id.encode()).digest()
@@ -40,9 +22,6 @@ def derive_key(room_id: str) -> bytes:
     )
     return base64.urlsafe_b64encode(kdf.derive(room_id.encode()))
 
-# ---------------------------------------------------
-# UI
-# ---------------------------------------------------
 
 st.title("🔐 Chat E2EE por Room ID")
 
@@ -53,30 +32,27 @@ if not room_id:
 fernet = Fernet(derive_key(room_id))
 
 # ---------------------------------------------------
-# LEER MENSAJES DEL SHEET
+# Leer mensajes del servidor
 # ---------------------------------------------------
 
-data = sheet.get_all_records()
-df = pd.DataFrame(data)
-
-room_msgs = df[df["room"] == room_id]
+resp = requests.get(f"{SERVER}/messages/{room_id}")
+ciphertexts = resp.json()
 
 st.subheader("Mensajes")
 
-for _, row in room_msgs.iterrows():
+for c in ciphertexts:
     try:
-        msg = fernet.decrypt(row["msg"].encode()).decode()
-        st.write(f"🕒 {row['time']} — {msg}")
+        st.write(fernet.decrypt(c.encode()).decode())
     except:
         pass
 
 # ---------------------------------------------------
-# ENVIAR MENSAJE
+# Enviar mensaje
 # ---------------------------------------------------
 
-msg = st.text_input("Escribe mensaje")
+msg = st.text_input("Mensaje")
 
 if st.button("Enviar") and msg:
     encrypted = fernet.encrypt(msg.encode()).decode()
-    sheet.append_row([room_id, encrypted, time.strftime("%H:%M:%S")])
+    requests.post(f"{SERVER}/send", json={"room": room_id, "msg": encrypted})
     st.rerun()

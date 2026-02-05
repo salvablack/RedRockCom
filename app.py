@@ -11,13 +11,13 @@ from streamlit_webrtc import (
 )
 
 # ---------------------------------------------------
-# CONFIGURACIÓN GENERAL
+# CONFIG GENERAL
 # ---------------------------------------------------
 
 st.set_page_config(page_title="Llamada privada", layout="centered")
 
 # ---------------------------------------------------
-# CONFIG RTC (PREPARADO PARA TURN)
+# RTC CONFIG (preparado para TURN)
 # ---------------------------------------------------
 
 @dataclass(frozen=True)
@@ -45,7 +45,7 @@ RTC_CONFIG = WebRTCConfig(
 ).build()
 
 # ---------------------------------------------------
-# AUDIO PROCESSOR (mute + nivel de voz)
+# AUDIO PROCESSOR (mute + nivel de voz SIN romper audio)
 # ---------------------------------------------------
 
 class AudioLevelProcessor(AudioProcessorBase):
@@ -58,9 +58,12 @@ class AudioLevelProcessor(AudioProcessorBase):
         self.audio_level = float(np.abs(audio).mean())
 
         if self.muted:
-            audio[:] = 0
+            audio = np.zeros_like(audio)
 
-        return frame.from_ndarray(audio, layout=frame.layout)
+        new_frame = frame.from_ndarray(audio, layout=frame.layout)
+        new_frame.sample_rate = frame.sample_rate
+
+        return new_frame
 
 
 # ---------------------------------------------------
@@ -112,7 +115,7 @@ st.button(
 )
 
 # ---------------------------------------------------
-# WEBRTC STREAMER
+# WEBRTC
 # ---------------------------------------------------
 
 webrtc_ctx = webrtc_streamer(
@@ -121,38 +124,34 @@ webrtc_ctx = webrtc_streamer(
     rtc_configuration=RTC_CONFIG,
     media_stream_constraints={
         "video": False,
-        "audio": {
-            "echoCancellation": True,
-            "noiseSuppression": True,
-            "autoGainControl": True,
-        },
+        "audio": True,
     },
     audio_processor_factory=AudioLevelProcessor,
     async_processing=True,
 )
 
 # ---------------------------------------------------
-# ESTADO DE CONEXIÓN + NIVEL DE AUDIO
+# ESTADO + NIVEL DE VOZ
 # ---------------------------------------------------
 
-status_placeholder = st.empty()
-audio_placeholder = st.empty()
+status = st.empty()
+voice = st.empty()
 
 if webrtc_ctx.state.playing:
-    status_placeholder.success("🟢 Conectado")
+    status.success("🟢 Conectado")
 
     if webrtc_ctx.audio_processor:
         webrtc_ctx.audio_processor.muted = st.session_state.muted
         level = webrtc_ctx.audio_processor.audio_level
 
         if level > 200:
-            audio_placeholder.success("🎤 Hablando")
+            voice.success("🎤 Hablando")
         elif level > 20:
-            audio_placeholder.info("🔊 Audio detectado")
+            voice.info("🔊 Audio detectado")
         else:
-            audio_placeholder.warning("🔇 Silencio")
+            voice.warning("🔇 Silencio")
 else:
-    status_placeholder.warning("🟡 Esperando a la otra persona...")
+    status.warning("🟡 Esperando a la otra persona...")
 
 # ---------------------------------------------------
 # INSTRUCCIONES
@@ -163,8 +162,8 @@ with st.expander("📌 Cómo usar"):
         """
         1. Ambos abren esta app.
         2. Escriben el mismo **Room ID**.
-        3. Permiten el acceso al micrófono.
-        4. La conexión es directa P2P y cifrada.
+        3. Permiten el micrófono.
+        4. La conexión es directa y cifrada (P2P).
         """
     )
 

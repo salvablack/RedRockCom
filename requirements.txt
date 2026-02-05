@@ -1,5 +1,5 @@
 streamlit
 cryptography
-gspread
-oauth2client
-pandas
+fastapi
+uvicorn
+requests

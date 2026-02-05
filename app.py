@@ -1,25 +1,24 @@
 import re
+import time
 import logging
 from dataclasses import dataclass
 
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
-
-# ---------------------------------------------------
-# CONFIGURACIÓN GLOBAL
-# ---------------------------------------------------
-
-st.set_page_config(
-    page_title="RedRock Room",
-    layout="centered",
-    initial_sidebar_state="collapsed",
+from streamlit_webrtc import (
+    webrtc_streamer,
+    WebRtcMode,
+    RTCConfiguration,
 )
 
+# ---------------------------------------------------
+# CONFIG GENERAL
+# ---------------------------------------------------
+
+st.set_page_config(page_title="Llamada privada", layout="centered")
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------
-# CONFIG RTC (STUN + preparado para TURN)
+# CONFIG RTC (LISTO PARA TURN)
 # ---------------------------------------------------
 
 @dataclass(frozen=True)
@@ -29,9 +28,8 @@ class WebRTCConfig:
     username: str | None = None
     credential: str | None = None
 
-    def build(self) -> RTCConfiguration:
+    def build(self):
         ice_servers = [{"urls": self.stun_urls}]
-
         if self.turn_urls:
             ice_servers.append(
                 {
@@ -40,73 +38,77 @@ class WebRTCConfig:
                     "credential": self.credential,
                 }
             )
-
         return RTCConfiguration({"iceServers": ice_servers})
 
 
 RTC_CONFIG = WebRTCConfig(
     stun_urls=["stun:stun.l.google.com:19302"],
-    # 🔥 Aquí podrás poner tu TURN real cuando lo tengas
-    # turn_urls=["turn:your.turn.server:3478"],
-    # username="user",
-    # credential="pass",
 ).build()
 
 # ---------------------------------------------------
-# UTILIDADES
+# VALIDACIÓN ROOM
 # ---------------------------------------------------
 
-ROOM_ID_REGEX = re.compile(r"^[a-zA-Z0-9_-]{4,32}$")
+ROOM_REGEX = re.compile(r"^[a-zA-Z0-9_-]{4,32}$")
 
 
-def validate_room_id(room_id: str) -> bool:
-    """Valida formato seguro del Room ID."""
-    return bool(ROOM_ID_REGEX.match(room_id))
+def get_room_id():
+    room = st.text_input("Room ID (definido por ti)", type="password")
 
-
-def get_room_id() -> str | None:
-    """Obtiene y valida el Room ID desde UI."""
-    room_id = st.text_input(
-        "Ingresa el Room ID",
-        type="password",
-        help="Debe tener entre 4 y 32 caracteres (letras, números, _ y -)",
-    )
-
-    if not room_id:
-        st.info("Ambas personas deben usar exactamente el mismo Room ID.")
+    if not room:
+        st.info("Ambas personas deben usar exactamente el mismo Room ID")
         return None
 
-    if not validate_room_id(room_id):
-        st.error("Room ID inválido. Usa solo letras, números, _ o - (4–32 chars).")
+    if not ROOM_REGEX.match(room):
+        st.error("Solo letras, números, _ y - (4–32 chars)")
         return None
 
-    return room_id
+    return room
 
 
 # ---------------------------------------------------
 # UI
 # ---------------------------------------------------
 
-st.title("🔒 RedRock Room")
-st.caption("Conexión cifrada, sin servidor intermedio.")
+st.title("🔒 RedRock Com")
 
 room_id = get_room_id()
 if not room_id:
     st.stop()
 
-st.success("Room ID válido. Inicializando conexión...")
+# ---------------------------------------------------
+# CONTROL DE MUTE EN SESSION STATE
+# ---------------------------------------------------
+
+if "muted" not in st.session_state:
+    st.session_state.muted = False
+
+def toggle_mute():
+    st.session_state.muted = not st.session_state.muted
+
+
+col1, col2 = st.columns(2)
+with col1:
+    st.button(
+        "🔇 Mute" if not st.session_state.muted else "🔊 Unmute",
+        on_click=toggle_mute,
+    )
 
 # ---------------------------------------------------
-# WEBRTC STREAMER
+# WEBRTC
 # ---------------------------------------------------
 
 webrtc_ctx = webrtc_streamer(
-    key=f"audio-call-{room_id}",
+    key=f"room-{room_id}",
     mode=WebRtcMode.SENDRECV,
     rtc_configuration=RTC_CONFIG,
     media_stream_constraints={
         "video": False,
-        "audio": True,
+        "audio": {
+            "echoCancellation": True,
+            "noiseSuppression": True,
+            "autoGainControl": True,
+        },
     },
     async_processing=True,
 )
@@ -115,21 +117,52 @@ webrtc_ctx = webrtc_streamer(
 # ESTADO DE CONEXIÓN
 # ---------------------------------------------------
 
+status_placeholder = st.empty()
+stats_placeholder = st.empty()
+
 if webrtc_ctx.state.playing:
-    st.success("🎙️ Conectado. Audio activo.")
+    status_placeholder.success("🟢 Conectado")
+
+    # Aplicar mute dinámico
+    if webrtc_ctx.audio_processor:
+        webrtc_ctx.audio_processor.muted = st.session_state.muted
+
+    # ---------------------------------------------------
+    # MONITOREO DE STATS (latencia y calidad)
+    # ---------------------------------------------------
+    for _ in range(5):  # refresca stats unos segundos
+        stats = webrtc_ctx.get_stats()
+        rtt = None
+        bitrate = None
+
+        for report in stats.values():
+            if report.type == "candidate-pair" and report.state == "succeeded":
+                rtt = report.currentRoundTripTime
+
+            if report.type == "outbound-rtp" and report.kind == "audio":
+                bitrate = report.bytesSent
+
+        stats_placeholder.markdown(
+            f"""
+            **Latencia (RTT):** {round(rtt*1000,2) if rtt else 'N/A'} ms  
+            **Audio enviado:** {bitrate if bitrate else 'N/A'} bytes
+            """
+        )
+        time.sleep(1)
+
 else:
-    st.warning("Esperando a que la otra persona se conecte...")
+    status_placeholder.warning("🟡 Esperando a la otra persona...")
 
 # ---------------------------------------------------
 # INSTRUCCIONES
 # ---------------------------------------------------
 
-with st.expander("📌 Instrucciones"):
+with st.expander("📌 Cómo usar"):
     st.markdown(
         """
-        1. Ambos abren esta aplicación.
-        2. Escriben exactamente el mismo **Room ID**.
-        3. Permiten el acceso al micrófono.
-        4. La conexión es directa P2P y cifrada.
+        1. Ambos abren esta app.
+        2. Escriben el mismo **Room ID**.
+        3. Permiten micrófono.
+        4. La conexión es directa, cifrada y sin servidor intermedio.
         """
     )
